@@ -1,0 +1,1083 @@
+SELECT
+    gjst.user_je_source_name                                                           "Source",
+    --gjh.je_source,
+   --- gjh.je_category,
+    gjct.user_je_category_name                                                         "Category",
+    gl.name                                                                            "Ledger Name",
+    gjb.name                                                                           "GL Batch Name",
+    gjh.name                                                                           "Journal Name",
+    gjh.period_name                                                                    "Period",
+    to_char(gjl.effective_date, 'dd-mm-yyyy')                                  "Accounting Date",
+    to_char(gjh.posted_date, 'dd-mm-yyyy')                                             "Posting Date",
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted')                                 "Status",
+    gjl.currency_code                                                                  "Currency",
+    gcc.segment1                                                                       "Company Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1)   "Company Description",
+    gcc.segment2                                                                       "Department Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2)   "Department Description",
+    gcc.segment3                                                                       "Natural Account Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3)   "Natural Account Description",
+    gcc.segment4                                                                       "Location Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4)   "Location Description",
+    gcc.segment5                                                                       "Product Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5)   "Product Description",
+    gcc.segment6                                                                       "Customer Category Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6)   "Customer Category Description",
+    gcc.segment7                                                                       "Sales Channel Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7)   "Sales Channel Description",
+    gcc.segment8                                                                       "Intercompany Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8)   "Intercompany Description",
+    gcc.segment9                                                                       "Account Class Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9)   "Account Class Description",
+    gcc.segment10                                                                      "Future 1 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10) "Future 1 Description",
+    gcc.segment11                                                                      "Future 2 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11) "Future 2 Description",
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11                                                                   "Code Combination",
+    gjl.je_line_num,
+    ( nvl(gjl.entered_dr, 0) )                                                         "Debit Amount",
+    ( nvl(gjl.entered_cr, 0) )                                                         "Credit Amount",
+    ( nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0) )                                "Net Amount",
+    ( nvl(gjl.accounted_dr, 0) )                                                       "Converted Dr",
+    ( nvl(gjl.accounted_cr, 0) )                                                       "Converted Cr",
+    xe.event_type_code,
+    SUM(nvl(xal.entered_dr, 0))                                                        "Subledger Dr",
+    SUM(nvl(xal.entered_cr, 0))                                                        "Subedger Cr",
+    SUM(nvl(xal.entered_dr, 0) - nvl(xal.entered_cr, 0))                               "Subledger Net",
+    (
+          SELECT
+            nvl(ppnf.display_name,pu.username)
+        FROM
+            gl_je_action_log   gjal,
+            per_users          pu,
+            per_person_names_f ppnf
+        WHERE
+                1 = 1
+            AND gjal.je_batch_id = gjb.je_batch_id
+            AND gjal.user_id = pu.username
+            AND ppnf.person_id(+) = pu.person_id
+            AND action_code = 'POSTED'
+            AND name_type(+) = 'GLOBAL'
+            AND trunc(sysdate) BETWEEN trunc(effective_start_date(+)) AND trunc(effective_end_date(+))
+    )                                                                                  "Posted By",
+    aia.invoice_num                                                                    "Transaction Number",
+    to_char(aia.invoice_date, 'dd/mm/yyyy')                                            "Transaction Date",
+    hp.party_name,
+      --  pha.segment1                                                                       "PO Number",
+    gjl.description                                                                    "Line Description",
+    gjct.user_je_category_name                                                         "Source Transaction Reference",
+    aia.created_by,
+    tbl.segment1                                                                       "PO_Number",
+    tbl.receipt_num                                                                    "Receipt_Number",
+	gjl.attribute1 Quantity
+FROM
+    gl_je_headers            gjh,
+    gl_je_sources_tl         gjst,
+    gl_je_categories_tl      gjct,
+    gl_ledgers               gl,
+    gl_je_batches            gjb,
+    gl_je_lines              gjl,
+    gl_code_combinations     gcc,
+    gl_import_references     gir,
+    xla_ae_lines             xal,
+    xla_ae_headers           xah,
+    xla_events               xe,
+    xla_transaction_entities xte,
+    ap_invoices_all          aia,
+     --  ap_invoice_lines_all     aila,
+   -- poz_suppliers              ps,
+    hz_parties               hp,
+    (
+        SELECT UNIQUE
+            ph.segment1,
+            h.receipt_num,
+            ph.po_header_id,
+            d.invoice_id
+        FROM
+            ap_invoice_distributions_all d,
+            po_distributions_all         pd,
+            rcv_transactions             t,
+            rcv_shipment_headers         h,
+            po_lines_all                 pl,
+            po_headers_all               ph
+        WHERE
+                1 = 1
+            AND d.po_distribution_id = pd.po_distribution_id
+            AND d.rcv_transaction_id = t.transaction_id
+            AND h.shipment_header_id = t.shipment_header_id (+)
+            AND t.po_line_id = pl.po_line_id
+            AND pl.po_header_id = ph.po_header_id
+    )                        tbl
+WHERE
+        1 = 1
+    AND gjh.ledger_id = gl.ledger_id
+    AND gjh.je_source = gjst.je_source_name
+    AND gjh.je_category = gjct.je_category_name
+    AND gjb.je_batch_id = gjh.je_batch_id
+    AND gjh.je_header_id = gjl.je_header_id
+    AND gjl.code_combination_id = gcc.code_combination_id
+    AND gjl.je_header_id = gir.je_header_id
+    AND gjl.je_line_num = gir.je_line_num
+    AND gir.gl_sl_link_id = xal.gl_sl_link_id (+)
+    AND gir.gl_sl_link_table = xal.gl_sl_link_table (+)
+    AND xal.ae_header_id = xah.ae_header_id (+)
+    AND xal.application_id = xah.application_id (+)
+    AND xah.event_id = xe.event_id (+)
+    AND xah.application_id = xe.application_id (+)
+    AND xe.entity_id = xte.entity_id (+)
+    AND xe.application_id = xte.application_id (+)
+    AND aia.invoice_id = xte.source_id_int_1
+    -- AND aia.vendor_id = ps.vendor_id
+    AND aia.party_id = hp.party_id
+    AND tbl.po_header_id (+) = aia.po_header_id
+    AND tbl.invoice_id (+) = aia.invoice_id
+     and 
+	 .user_je_source_name = 'Payables'
+    AND gjct.user_je_category_name = 'Purchase Invoices'
+    AND gjst.language = userenv('LANG')
+    AND gjct.language = userenv('LANG')
+    AND gl.name = nvl(:p_ledger_name, gl.name)
+    AND gjst.user_je_source_name = nvl(:p_source, gjst.user_je_source_name)
+    AND gjh.status = nvl(:p_status, gjh.status)
+    AND gjb.name = nvl(:p_batch, gjb.name)
+    AND gjh.default_effective_date BETWEEN trunc(:p_from_date) AND (trunc(:p_to_date) + 86399/86400)
+    AND gcc.segment3 BETWEEN nvl(:p_account_from, gcc.segment3) AND nvl(:p_account_to, gcc.segment3)
+    AND gcc.segment2 BETWEEN nvl(:p_department_from, gcc.segment2) AND nvl(:p_department_to, gcc.segment2)
+    AND gcc.segment4 BETWEEN nvl(:p_location_from, gcc.segment4) AND nvl(:p_location_to, gcc.segment4)
+    AND gcc.segment5 BETWEEN nvl(:p_product_from, gcc.segment5) AND nvl(:p_product_to, gcc.segment5)
+    AND gcc.segment6 BETWEEN nvl(:p_customer_category_from, gcc.segment6) AND nvl(:p_customer_category_to, gcc.segment6)
+    AND gcc.segment7 BETWEEN nvl(:p_sales_channel_from, gcc.segment7) AND nvl(:p_sales_channel_to, gcc.segment7)
+    AND gcc.segment8 BETWEEN nvl(:p_intercompany_from, gcc.segment8) AND nvl(:p_intercompany_to, gcc.segment8)
+    AND gcc.segment9 BETWEEN nvl(:p_account_class_from, gcc.segment9) AND nvl(:p_account_class_to, gcc.segment9)
+--    AND gjb.name IN (
+--        'Payables A 696002000002 696006 6 N'
+--    )
+GROUP BY
+    gjst.user_je_source_name,
+    --gjh.je_source,
+    --gjh.je_category,
+    gjct.user_je_category_name,
+    gl.name,
+    gjb.name,
+    gjh.name,
+    gjh.period_name,
+    to_char(gjl.effective_date, 'dd-mm-yyyy')  ,
+    to_char(gjh.posted_date, 'dd-mm-yyyy'),
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted'),
+    gjl.currency_code,
+    gcc.segment1,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1),
+    gcc.segment2,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2),
+    gcc.segment3,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3),
+    gcc.segment4,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4),
+    gcc.segment5,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5),
+    gcc.segment6,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6),
+    gcc.segment7,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7),
+    gcc.segment8,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8),
+    gcc.segment9,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9),
+    gcc.segment10,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10),
+    gcc.segment11,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11),
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11,
+    gjl.je_line_num,
+    (
+        nvl(gjl.entered_dr, 0)
+    ),
+    (
+        nvl(gjl.entered_cr, 0)
+    ),
+    (
+        nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0)
+    ),
+    (
+        nvl(gjl.accounted_dr, 0)
+    ),
+    (
+        nvl(gjl.accounted_cr, 0)
+    ),
+    gjb.je_batch_id,
+    xe.event_type_code,
+    aia.invoice_num,
+    to_char(aia.invoice_date, 'dd/mm/yyyy'),
+    hp.party_name,
+    gjl.description,
+    aia.created_by,
+    aia.po_header_id,
+    tbl.segment1,
+    tbl.receipt_num,
+    aia.invoice_id,
+	GJL.ATTRIBUTE1
+UNION ALL
+SELECT
+    gjst.user_je_source_name                                                           "Source",
+  --  gjh.je_source,
+   -- gjh.je_category,
+    gjct.user_je_category_name                                                         "Category",
+    gl.name                                                                            "Ledger Name",
+    gjb.name                                                                           "GL Batch Name",
+    gjh.name                                                                           "Journal Name",
+    gjh.period_name                                                                    "Period",
+   to_char(gjl.effective_date, 'dd-mm-yyyy')                                   "Accounting Date",
+    to_char(gjh.posted_date, 'dd-mm-yyyy')                                             "Posting Date",
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted')                                 "Status",
+    gjl.currency_code                                                                  "Currency",
+    gcc.segment1                                                                       "Company Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1)   "Company Description",
+    gcc.segment2                                                                       "Department Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2)   "Department Description",
+    gcc.segment3                                                                       "Natural Account Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3)   "Natural Account Description",
+    gcc.segment4                                                                       "Location Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4)   "Location Description",
+    gcc.segment5                                                                       "Product Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5)   "Product Description",
+    gcc.segment6                                                                       "Customer Category Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6)   "Customer Category Description",
+    gcc.segment7                                                                       "Sales Channel Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7)   "Sales Channel Description",
+    gcc.segment8                                                                       "Intercompany Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8)   "Intercompany Description",
+    gcc.segment9                                                                       "Account Class Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9)   "Account Class Description",
+    gcc.segment10                                                                      "Future 1 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10) "Future 1 Description",
+    gcc.segment11                                                                      "Future 2 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11) "Future 2 Description",
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11                                                                   "Code Combination",
+    gjl.je_line_num,
+    ( nvl(gjl.entered_dr, 0) )                                                         "Debit Amount",
+    ( nvl(gjl.entered_cr, 0) )                                                         "Credit Amount",
+    ( nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0) )                                "Net Amount",
+    ( nvl(gjl.accounted_dr, 0) )                                                       "Converted Dr",
+    ( nvl(gjl.accounted_cr, 0) )                                                       "Converted Cr",
+    xe.event_type_code,
+    SUM(nvl(xal.entered_dr, 0))                                                        "Subledger Dr",
+    SUM(nvl(xal.entered_cr, 0))                                                        "Subedger Cr",
+    SUM(nvl(xal.entered_dr, 0) - nvl(xal.entered_cr, 0))                               "Subledger Net",
+    (
+         SELECT
+            nvl(ppnf.display_name,pu.username)
+        FROM
+            gl_je_action_log   gjal,
+            per_users          pu,
+            per_person_names_f ppnf
+        WHERE
+                1 = 1
+            AND gjal.je_batch_id = gjb.je_batch_id
+            AND gjal.user_id = pu.username
+            AND ppnf.person_id(+) = pu.person_id
+            AND action_code = 'POSTED'
+            AND name_type(+) = 'GLOBAL'
+            AND trunc(sysdate) BETWEEN trunc(effective_start_date(+)) AND trunc(effective_end_date(+))
+    )                                                                                  "Posted By",
+    to_char(aca.check_number)                                                          "Transaction Number",
+    to_char(aca.check_date, 'dd/mm/yyyy')                                              "Transaction Date",
+    hp.party_name,
+      --  pha.segment1                                                                       "PO Number",
+    gjl.description                                                                    "Line Description",
+    gjct.user_je_category_name                                                         "Source Transaction Reference",
+    aca.created_by,
+    NULL                                                                               "PO_Number",
+    NULL                                                                               "Receipt_Number",
+		gjl.attribute1 Quantity
+FROM
+    gl_je_headers            gjh,
+    gl_je_sources_tl         gjst,
+    gl_je_categories_tl      gjct,
+    gl_ledgers               gl,
+    gl_je_batches            gjb,
+    gl_je_lines              gjl,
+    gl_code_combinations     gcc,
+    gl_import_references     gir,
+    xla_ae_lines             xal,
+    xla_ae_headers           xah,
+    xla_events               xe,
+    xla_transaction_entities xte,
+    ap_checks_all            aca,
+    poz_suppliers            ps,
+    hz_parties               hp
+WHERE
+        1 = 1
+    AND gjh.ledger_id = gl.ledger_id
+    AND gjh.je_source = gjst.je_source_name
+    AND gjh.je_category = gjct.je_category_name
+    AND gjb.je_batch_id = gjh.je_batch_id
+    AND gjh.je_header_id = gjl.je_header_id
+    AND gjl.code_combination_id = gcc.code_combination_id
+    AND gjl.je_header_id = gir.je_header_id
+    AND gjl.je_line_num = gir.je_line_num
+    AND gir.gl_sl_link_id = xal.gl_sl_link_id (+)
+    AND gir.gl_sl_link_table = xal.gl_sl_link_table (+)
+    AND xal.ae_header_id = xah.ae_header_id (+)
+    AND xal.application_id = xah.application_id (+)
+    AND xah.event_id = xe.event_id (+)
+    AND xah.application_id = xe.application_id (+)
+    AND xe.entity_id = xte.entity_id (+)
+    AND xe.application_id = xte.application_id (+)
+    AND aca.check_id = xte.source_id_int_1
+    AND aca.vendor_id = ps.vendor_id
+    AND ps.party_id = hp.party_id
+    AND  gjst.user_je_source_name = 'Payables'
+    AND gjct.user_je_category_name IN ( 'Payments', 'Reconciled Payments' )
+    AND gjst.language = userenv('LANG')
+    AND gjct.language = userenv('LANG')
+    AND gl.name = nvl(:p_ledger_name, gl.name)
+    AND gjst.user_je_source_name = nvl(:p_source, gjst.user_je_source_name)
+    AND gjh.status = nvl(:p_status, gjh.status)
+   AND gjb.name = nvl(:p_batch, gjb.name)
+    AND gjh.default_effective_date BETWEEN trunc(:p_from_date) AND (trunc(:p_to_date) + 86399/86400)
+    AND gcc.segment3 BETWEEN nvl(:p_account_from, gcc.segment3) AND nvl(:p_account_to, gcc.segment3)
+    AND gcc.segment2 BETWEEN nvl(:p_department_from, gcc.segment2) AND nvl(:p_department_to, gcc.segment2)
+    AND gcc.segment4 BETWEEN nvl(:p_location_from, gcc.segment4) AND nvl(:p_location_to, gcc.segment4)
+    AND gcc.segment5 BETWEEN nvl(:p_product_from, gcc.segment5) AND nvl(:p_product_to, gcc.segment5)
+    AND gcc.segment6 BETWEEN nvl(:p_customer_category_from, gcc.segment6) AND nvl(:p_customer_category_to, gcc.segment6)
+    AND gcc.segment7 BETWEEN nvl(:p_sales_channel_from, gcc.segment7) AND nvl(:p_sales_channel_to, gcc.segment7)
+    AND gcc.segment8 BETWEEN nvl(:p_intercompany_from, gcc.segment8) AND nvl(:p_intercompany_to, gcc.segment8)
+    AND gcc.segment9 BETWEEN nvl(:p_account_class_from, gcc.segment9) AND nvl(:p_account_class_to, gcc.segment9)
+ --   AND gjb.name IN ( 'Payables A 696002000002 696006 5 N' )
+GROUP BY
+    gjst.user_je_source_name,
+ --   gjh.je_source,
+  --  gjh.je_category,
+    gjct.user_je_category_name,
+    gl.name,
+    gjb.name,
+    gjh.name,
+    gjh.period_name,
+    to_char(gjl.effective_date, 'dd-mm-yyyy')  ,
+    to_char(gjh.posted_date, 'dd-mm-yyyy'),
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted'),
+    gjl.currency_code,
+    gcc.segment1,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1),
+    gcc.segment2,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2),
+    gcc.segment3,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3),
+    gcc.segment4,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4),
+    gcc.segment5,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5),
+    gcc.segment6,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6),
+    gcc.segment7,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7),
+    gcc.segment8,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8),
+    gcc.segment9,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9),
+    gcc.segment10,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10),
+    gcc.segment11,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11),
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11,
+    gjl.je_line_num,
+    (
+        nvl(gjl.entered_dr, 0)
+    ),
+    (
+        nvl(gjl.entered_cr, 0)
+    ),
+    (
+        nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0)
+    ),
+    (
+        nvl(gjl.accounted_dr, 0)
+    ),
+    (
+        nvl(gjl.accounted_cr, 0)
+    ),
+    gjb.je_batch_id,
+    xe.event_type_code,
+    to_char(aca.check_number),
+    to_char(aca.check_date, 'dd/mm/yyyy'),
+    hp.party_name,
+    gjl.description,
+    aca.created_by,
+	GJL.ATTRIBUTE1
+UNION ALL
+SELECT
+    gjst.user_je_source_name                                                           "Source",
+  --  gjh.je_source,
+--    gjh.je_category,
+    gjct.user_je_category_name                                                         "Category",
+    gl.name                                                                            "Ledger Name",
+    gjb.name                                                                           "GL Batch Name",
+    gjh.name                                                                           "Journal Name",
+    gjh.period_name                                                                    "Period",
+    to_char(gjl.effective_date, 'dd-mm-yyyy')                                   "Accounting Date",
+    to_char(gjh.posted_date, 'dd-mm-yyyy')                                             "Posting Date",
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted')                                 "Status",
+    gjl.currency_code                                                                  "Currency",
+    gcc.segment1                                                                       "Company Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1)   "Company Description",
+    gcc.segment2                                                                       "Department Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2)   "Department Description",
+    gcc.segment3                                                                       "Natural Account Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3)   "Natural Account Description",
+    gcc.segment4                                                                       "Location Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4)   "Location Description",
+    gcc.segment5                                                                       "Product Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5)   "Product Description",
+    gcc.segment6                                                                       "Customer Category Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6)   "Customer Category Description",
+    gcc.segment7                                                                       "Sales Channel Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7)   "Sales Channel Description",
+    gcc.segment8                                                                       "Intercompany Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8)   "Intercompany Description",
+    gcc.segment9                                                                       "Account Class Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9)   "Account Class Description",
+    gcc.segment10                                                                      "Future 1 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10) "Future 1 Description",
+    gcc.segment11                                                                      "Future 2 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11) "Future 2 Description",
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11                                                                   "Code Combination",
+    gjl.je_line_num,
+    ( nvl(gjl.entered_dr, 0) )                                                         "Debit Amount",
+    ( nvl(gjl.entered_cr, 0) )                                                         "Credit Amount",
+    ( nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0) )                                "Net Amount",
+    ( nvl(gjl.accounted_dr, 0) )                                                       "Converted Dr",
+    ( nvl(gjl.accounted_cr, 0) )                                                       "Converted Cr",
+    xe.event_type_code,
+    SUM(nvl(xal.entered_dr, 0))                                                        "Subledger Dr",
+    SUM(nvl(xal.entered_cr, 0))                                                        "Subedger Cr",
+    SUM(nvl(xal.entered_dr, 0) - nvl(xal.entered_cr, 0))                               "Subledger Net",
+    (
+         SELECT
+            nvl(ppnf.display_name,pu.username)
+        FROM
+            gl_je_action_log   gjal,
+            per_users          pu,
+            per_person_names_f ppnf
+        WHERE
+                1 = 1
+            AND gjal.je_batch_id = gjb.je_batch_id
+            AND gjal.user_id = pu.username
+            AND ppnf.person_id(+) = pu.person_id
+            AND action_code = 'POSTED'
+            AND name_type(+) = 'GLOBAL'
+            AND trunc(sysdate) BETWEEN trunc(effective_start_date(+)) AND trunc(effective_end_date(+))
+    )                                                                                  "Posted By",
+    rcta.trx_number                                                                    "Transaction Number",
+    to_char(rcta.trx_date, 'dd/mm/yyyy')                                               "Transaction Date",
+    hp.party_name,
+      --  pha.segment1                                                                       "PO Number",
+    gjl.description                                                                    "Line Description",
+    gjct.user_je_category_name                                                         "Source Transaction Reference",
+    rcta.created_by,
+    NULL                                                                               "PO_Number",
+    NULL                                                                               "Receipt_Number",
+		gjl.attribute1 Quantity
+FROM
+    gl_je_headers            gjh,
+    gl_je_sources_tl         gjst,
+    gl_je_categories_tl      gjct,
+    gl_ledgers               gl,
+    gl_je_batches            gjb,
+    gl_je_lines              gjl,
+    gl_code_combinations     gcc,
+    gl_import_references     gir,
+    xla_ae_lines             xal,
+    xla_ae_headers           xah,
+    xla_events               xe,
+    xla_transaction_entities xte,
+    ra_customer_trx_all      rcta,
+    hz_cust_accounts         hca,
+    hz_parties               hp
+WHERE
+        1 = 1
+    AND gjh.ledger_id = gl.ledger_id
+    AND gjh.je_source = gjst.je_source_name
+    AND gjh.je_category = gjct.je_category_name
+    AND gjb.je_batch_id = gjh.je_batch_id
+    AND gjh.je_header_id = gjl.je_header_id
+    AND gjl.code_combination_id = gcc.code_combination_id
+    AND gjl.je_header_id = gir.je_header_id
+    AND gjl.je_line_num = gir.je_line_num
+    AND gir.gl_sl_link_id = xal.gl_sl_link_id (+)
+    AND gir.gl_sl_link_table = xal.gl_sl_link_table (+)
+    AND xal.ae_header_id = xah.ae_header_id (+)
+    AND xal.application_id = xah.application_id (+)
+    AND xah.event_id = xe.event_id (+)
+    AND xah.application_id = xe.application_id (+)
+    AND xe.entity_id = xte.entity_id (+)
+    AND xe.application_id = xte.application_id (+)
+    AND rcta.customer_trx_id = xte.source_id_int_1
+    AND rcta.bill_to_customer_id = hca.cust_account_id
+    AND hca.party_id = hp.party_id
+    AND  gjst.user_je_source_name = 'Receivables'
+    AND gjct.user_je_category_name IN ( 'Sales Invoices', 'Credit Memos' )
+    AND gjst.language = userenv('LANG')
+    AND gjct.language = userenv('LANG')
+    AND gl.name = nvl(:p_ledger_name, gl.name)
+    AND gjst.user_je_source_name = nvl(:p_source, gjst.user_je_source_name)
+    AND gjh.status = nvl(:p_status, gjh.status)
+  AND gjb.name = nvl(:p_batch, gjb.name)
+    AND gjh.default_effective_date BETWEEN trunc(:p_from_date) AND (trunc(:p_to_date) + 86399/86400)
+    AND gcc.segment3 BETWEEN nvl(:p_account_from, gcc.segment3) AND nvl(:p_account_to, gcc.segment3)
+    AND gcc.segment2 BETWEEN nvl(:p_department_from, gcc.segment2) AND nvl(:p_department_to, gcc.segment2)
+    AND gcc.segment4 BETWEEN nvl(:p_location_from, gcc.segment4) AND nvl(:p_location_to, gcc.segment4)
+    AND gcc.segment5 BETWEEN nvl(:p_product_from, gcc.segment5) AND nvl(:p_product_to, gcc.segment5)
+    AND gcc.segment6 BETWEEN nvl(:p_customer_category_from, gcc.segment6) AND nvl(:p_customer_category_to, gcc.segment6)
+    AND gcc.segment7 BETWEEN nvl(:p_sales_channel_from, gcc.segment7) AND nvl(:p_sales_channel_to, gcc.segment7)
+    AND gcc.segment8 BETWEEN nvl(:p_intercompany_from, gcc.segment8) AND nvl(:p_intercompany_to, gcc.segment8)
+    AND gcc.segment9 BETWEEN nvl(:p_account_class_from, gcc.segment9) AND nvl(:p_account_class_to, gcc.segment9)
+   -- AND gjb.name IN ( 'Receivables A 751589000001 751590 2 N' )
+GROUP BY
+    gjst.user_je_source_name,
+    --gjh.je_source,
+   -- gjh.je_category,
+    gjct.user_je_category_name,
+    gl.name,
+    gjb.name,
+    gjh.name,
+    gjh.period_name,
+    to_char(gjl.effective_date, 'dd-mm-yyyy') ,
+    to_char(gjh.posted_date, 'dd-mm-yyyy'),
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted'),
+    gjl.currency_code,
+    gcc.segment1,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1),
+    gcc.segment2,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2),
+    gcc.segment3,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3),
+    gcc.segment4,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4),
+    gcc.segment5,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5),
+    gcc.segment6,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6),
+    gcc.segment7,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7),
+    gcc.segment8,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8),
+    gcc.segment9,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9),
+    gcc.segment10,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10),
+    gcc.segment11,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11),
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11,
+    gjl.je_line_num,
+    (
+        nvl(gjl.entered_dr, 0)
+    ),
+    (
+        nvl(gjl.entered_cr, 0)
+    ),
+    (
+        nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0)
+    ),
+    (
+        nvl(gjl.accounted_dr, 0)
+    ),
+    (
+        nvl(gjl.accounted_cr, 0)
+    ),
+    gjb.je_batch_id,
+    xe.event_type_code,
+    rcta.trx_number,
+    to_char(rcta.trx_date, 'dd/mm/yyyy'),
+    hp.party_name,
+    gjl.description,
+    rcta.created_by,
+	GJL.ATTRIBUTE1
+UNION ALL
+SELECT
+    gjst.user_je_source_name                                                           "Source",
+   -- gjh.je_source,
+   -- gjh.je_category,
+    gjct.user_je_category_name                                                         "Category",
+    gl.name                                                                            "Ledger Name",
+    gjb.name                                                                           "GL Batch Name",
+    gjh.name                                                                           "Journal Name",
+    gjh.period_name                                                                    "Period",
+    to_char(gjl.effective_date, 'dd-mm-yyyy')                                 "Accounting Date",
+    to_char(gjh.posted_date, 'dd-mm-yyyy')                                             "Posting Date",
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted')                                 "Status",
+    gjl.currency_code                                                                  "Currency",
+    gcc.segment1                                                                       "Company Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1)   "Company Description",
+    gcc.segment2                                                                       "Department Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2)   "Department Description",
+    gcc.segment3                                                                       "Natural Account Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3)   "Natural Account Description",
+    gcc.segment4                                                                       "Location Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4)   "Location Description",
+    gcc.segment5                                                                       "Product Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5)   "Product Description",
+    gcc.segment6                                                                       "Customer Category Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6)   "Customer Category Description",
+    gcc.segment7                                                                       "Sales Channel Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7)   "Sales Channel Description",
+    gcc.segment8                                                                       "Intercompany Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8)   "Intercompany Description",
+    gcc.segment9                                                                       "Account Class Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9)   "Account Class Description",
+    gcc.segment10                                                                      "Future 1 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10) "Future 1 Description",
+    gcc.segment11                                                                      "Future 2 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11) "Future 2 Description",
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11                                                                   "Code Combination",
+    gjl.je_line_num,
+    ( nvl(gjl.entered_dr, 0) )                                                         "Debit Amount",
+    ( nvl(gjl.entered_cr, 0) )                                                         "Credit Amount",
+    ( nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0) )                                "Net Amount",
+    ( nvl(gjl.accounted_dr, 0) )                                                       "Converted Dr",
+    ( nvl(gjl.accounted_cr, 0) )                                                       "Converted Cr",
+    xe.event_type_code,
+    SUM(nvl(xal.entered_dr, 0))                                                        "Subledger Dr",
+    SUM(nvl(xal.entered_cr, 0))                                                        "Subedger Cr",
+    SUM(nvl(xal.entered_dr, 0) - nvl(xal.entered_cr, 0))                               "Subledger Net",
+    (
+         SELECT
+            nvl(ppnf.display_name,pu.username)
+        FROM
+            gl_je_action_log   gjal,
+            per_users          pu,
+            per_person_names_f ppnf
+        WHERE
+                1 = 1
+            AND gjal.je_batch_id = gjb.je_batch_id
+            AND gjal.user_id = pu.username
+            AND ppnf.person_id(+) = pu.person_id
+            AND action_code = 'POSTED'
+            AND name_type(+) = 'GLOBAL'
+            AND trunc(sysdate) BETWEEN trunc(effective_start_date(+)) AND trunc(effective_end_date(+))
+    )                                                                                  "Posted By",
+    acra.receipt_number                                                                "Transaction Number",
+    to_char(acra.receipt_date, 'dd/mm/yyyy')                                           "Transaction Date",
+    hp.party_name,
+      --  pha.segment1                                                                       "PO Number",
+    gjl.description                                                                    "Line Description",
+    gjct.user_je_category_name                                                         "Source Transaction Reference",
+    acra.created_by,
+    NULL                                                                               "PO_Number",
+    NULL                                                                               "Receipt_Number",
+		gjl.attribute1 Quantity
+FROM
+    gl_je_headers            gjh,
+    gl_je_sources_tl         gjst,
+    gl_je_categories_tl      gjct,
+    gl_ledgers               gl,
+    gl_je_batches            gjb,
+    gl_je_lines              gjl,
+    gl_code_combinations     gcc,
+    gl_import_references     gir,
+    xla_ae_lines             xal,
+    xla_ae_headers           xah,
+    xla_events               xe,
+    xla_transaction_entities xte,
+    ar_cash_receipts_all     acra,
+    hz_cust_accounts         hca,
+    hz_parties               hp
+WHERE
+        1 = 1
+    AND gjh.ledger_id = gl.ledger_id
+    AND gjh.je_source = gjst.je_source_name
+    AND gjh.je_category = gjct.je_category_name
+    AND gjb.je_batch_id = gjh.je_batch_id
+    AND gjh.je_header_id = gjl.je_header_id
+    AND gjl.code_combination_id = gcc.code_combination_id
+    AND gjl.je_header_id = gir.je_header_id
+    AND gjl.je_line_num = gir.je_line_num
+    AND gir.gl_sl_link_id = xal.gl_sl_link_id (+)
+    AND gir.gl_sl_link_table = xal.gl_sl_link_table (+)
+    AND xal.ae_header_id = xah.ae_header_id (+)
+    AND xal.application_id = xah.application_id (+)
+    AND xah.event_id = xe.event_id (+)
+    AND xah.application_id = xe.application_id (+)
+    AND xe.entity_id = xte.entity_id (+)
+    AND xe.application_id = xte.application_id (+)
+    AND acra.cash_receipt_id = xte.source_id_int_1
+    AND acra.pay_from_customer = hca.cust_account_id
+    AND hca.party_id = hp.party_id
+    AND  gjst.user_je_source_name = 'Receivables'
+    AND gjct.user_je_category_name IN ( 'Misc Receipts', 'Receipts' )
+    AND gjst.language = userenv('LANG')
+    AND gjct.language = userenv('LANG')
+    AND gl.name = nvl(:p_ledger_name, gl.name)
+    AND gjst.user_je_source_name = nvl(:p_source, gjst.user_je_source_name)
+    AND gjh.status = nvl(:p_status, gjh.status)
+    AND gjb.name = nvl(:p_batch, gjb.name)
+    AND gjh.default_effective_date BETWEEN trunc(:p_from_date) AND (trunc(:p_to_date) + 86399/86400)
+    AND gcc.segment3 BETWEEN nvl(:p_account_from, gcc.segment3) AND nvl(:p_account_to, gcc.segment3)
+    AND gcc.segment2 BETWEEN nvl(:p_department_from, gcc.segment2) AND nvl(:p_department_to, gcc.segment2)
+    AND gcc.segment4 BETWEEN nvl(:p_location_from, gcc.segment4) AND nvl(:p_location_to, gcc.segment4)
+    AND gcc.segment5 BETWEEN nvl(:p_product_from, gcc.segment5) AND nvl(:p_product_to, gcc.segment5)
+    AND gcc.segment6 BETWEEN nvl(:p_customer_category_from, gcc.segment6) AND nvl(:p_customer_category_to, gcc.segment6)
+    AND gcc.segment7 BETWEEN nvl(:p_sales_channel_from, gcc.segment7) AND nvl(:p_sales_channel_to, gcc.segment7)
+    AND gcc.segment8 BETWEEN nvl(:p_intercompany_from, gcc.segment8) AND nvl(:p_intercompany_to, gcc.segment8)
+    AND gcc.segment9 BETWEEN nvl(:p_account_class_from, gcc.segment9) AND nvl(:p_account_class_to, gcc.segment9)
+ --   AND gjb.name IN ( 'Receivables A 817347000001 817348 N' )
+GROUP BY
+    gjst.user_je_source_name,
+  --  gjh.je_source,
+  --  gjh.je_category,
+    gjct.user_je_category_name,
+    gl.name,
+    gjb.name,
+    gjh.name,
+    gjh.period_name,
+    to_char(gjl.effective_date, 'dd-mm-yyyy')  ,
+    to_char(gjh.posted_date, 'dd-mm-yyyy'),
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted'),
+    gjl.currency_code,
+    gcc.segment1,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1),
+    gcc.segment2,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2),
+    gcc.segment3,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3),
+    gcc.segment4,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4),
+    gcc.segment5,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5),
+    gcc.segment6,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6),
+    gcc.segment7,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7),
+    gcc.segment8,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8),
+    gcc.segment9,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9),
+    gcc.segment10,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10),
+    gcc.segment11,
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11),
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11,
+    gjl.je_line_num,
+    (
+        nvl(gjl.entered_dr, 0)
+    ),
+    (
+        nvl(gjl.entered_cr, 0)
+    ),
+    (
+        nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0)
+    ),
+    (
+        nvl(gjl.accounted_dr, 0)
+    ),
+    (
+        nvl(gjl.accounted_cr, 0)
+    ),
+    gjb.je_batch_id,
+    xe.event_type_code,
+    acra.receipt_number,
+    to_char(acra.receipt_date, 'dd/mm/yyyy'),
+    hp.party_name,
+    gjl.description,
+    acra.created_by,
+	GJL.ATTRIBUTE1
+UNION ALL
+SELECT
+    gjst.user_je_source_name                                                           "Source",
+    --gjh.je_source,
+  --  gjh.je_category,
+    gjct.user_je_category_name                                                         "Category",
+    gl.name                                                                            "Ledger Name",
+    gjb.name                                                                           "GL Batch Name",
+    gjh.name                                                                           "Journal Name",
+    gjh.period_name                                                                    "Period",
+    to_char(gjl.effective_date, 'dd-mm-yyyy')                                    "Accounting Date",
+    to_char(gjh.posted_date, 'dd-mm-yyyy')                                             "Posting Date",
+    decode(gjh.status, 'P', 'Posted', 'U', 'Unposted')                                 "Status",
+    gjl.currency_code                                                                  "Currency",
+    gcc.segment1                                                                       "Company Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 1, gcc.segment1)   "Company Description",
+    gcc.segment2                                                                       "Department Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 2, gcc.segment2)   "Department Description",
+    gcc.segment3                                                                       "Natural Account Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 3, gcc.segment3)   "Natural Account Description",
+    gcc.segment4                                                                       "Location Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 4, gcc.segment4)   "Location Description",
+    gcc.segment5                                                                       "Product Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 5, gcc.segment5)   "Product Description",
+    gcc.segment6                                                                       "Customer Category Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 6, gcc.segment6)   "Customer Category Description",
+    gcc.segment7                                                                       "Sales Channel Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 7, gcc.segment7)   "Sales Channel Description",
+    gcc.segment8                                                                       "Intercompany Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 8, gcc.segment8)   "Intercompany Description",
+    gcc.segment9                                                                       "Account Class Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 9, gcc.segment9)   "Account Class Description",
+    gcc.segment10                                                                      "Future 1 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 10, gcc.segment10) "Future 1 Description",
+    gcc.segment11                                                                      "Future 2 Code",
+    gl_flexfields_pkg.get_description_sql(gcc.chart_of_accounts_id, 11, gcc.segment11) "Future 2 Description",
+    gcc.segment1
+    || '-'
+    || gcc.segment2
+    || '-'
+    || gcc.segment3
+    || '-'
+    || gcc.segment4
+    || '-'
+    || gcc.segment5
+    || '-'
+    || gcc.segment6
+    || '-'
+    || gcc.segment7
+    || '-'
+    || gcc.segment8
+    || '-'
+    || gcc.segment9
+    || '-'
+    || gcc.segment10
+    || '-'
+    || gcc.segment11                                                                   "Code Combination",
+    gjl.je_line_num,
+    ( nvl(gjl.entered_dr, 0) )                                                         "Debit Amount",
+    ( nvl(gjl.entered_cr, 0) )                                                         "Credit Amount",
+    ( nvl(gjl.entered_dr, 0) - nvl(gjl.entered_cr, 0) )                                "Net Amount",
+    ( nvl(gjl.accounted_dr, 0) )                                                       "Converted Dr",
+    ( nvl(gjl.accounted_cr, 0) )                                                       "Converted Cr",
+    NULL                                                                               event_type_code,
+    NULL                                                                               "Subledger Dr",
+    NULL                                                                               "Subedger Cr",
+    NULL                                                                               "Subledger Net",
+    (
+        SELECT
+            nvl(ppnf.display_name,pu.username)
+        FROM
+            gl_je_action_log   gjal,
+            per_users          pu,
+            per_person_names_f ppnf
+        WHERE
+                1 = 1
+            AND gjal.je_batch_id = gjb.je_batch_id
+            AND gjal.user_id = pu.username
+            AND ppnf.person_id(+) = pu.person_id
+            AND action_code = 'POSTED'
+            AND name_type(+) = 'GLOBAL'
+            AND trunc(sysdate) BETWEEN trunc(effective_start_date(+)) AND trunc(effective_end_date(+))
+    )                                                                                  "Posted By",
+    NULL                                                                               "Transaction Number",
+    NULL                                                                               "Transaction Date",
+    NULL                                                                               party_name,
+      --  pha.segment1                                                                       "PO Number",
+    gjl.description                                                                    "Line Description",
+    gjct.user_je_category_name                                                         "Source Transaction Reference",
+    (
+        SELECT
+            nvl(ppnf.display_name,pu.username)
+        FROM
+            gl_je_action_log   gjal,
+            per_users          pu,
+            per_person_names_f ppnf
+        WHERE
+                1 = 1
+            AND gjal.je_batch_id = gjb.je_batch_id
+            AND gjal.user_id = pu.username
+            AND ppnf.person_id(+) = pu.person_id
+            AND action_code = 'CREATED'
+            AND name_type(+) = 'GLOBAL'
+            AND trunc(sysdate) BETWEEN trunc(effective_start_date(+)) AND trunc(effective_end_date(+))
+    )                                                                                  created_by,
+    NULL                                                                               "PO_Number",
+    NULL                                                                               "Receipt_Number",
+		gjl.attribute1 Quantity
+FROM
+    gl_je_headers        gjh,
+    gl_je_sources_tl     gjst,
+    gl_je_categories_tl  gjct,
+    gl_ledgers           gl,
+    gl_je_batches        gjb,
+    gl_je_lines          gjl,
+    gl_code_combinations gcc
+WHERE
+        1 = 1
+    AND gjh.ledger_id = gl.ledger_id
+    AND gjh.je_source = gjst.je_source_name
+    AND gjh.je_category = gjct.je_category_name
+    AND gjb.je_batch_id = gjh.je_batch_id
+    AND gjh.je_header_id = gjl.je_header_id
+    AND gjl.code_combination_id = gcc.code_combination_id
+     and gjst.user_je_source_name NOT IN ( 'Payables', 'Receivables' )
+    AND gjst.language = userenv('LANG')
+    AND gjct.language = userenv('LANG')
+    AND gl.name = nvl(:p_ledger_name, gl.name)
+    AND gjst.user_je_source_name = nvl(:p_source, gjst.user_je_source_name)
+    AND gjh.status = nvl(:p_status, gjh.status)
+ AND gjb.name = nvl(:p_batch, gjb.name)
+    AND gjh.default_effective_date BETWEEN trunc(:p_from_date) AND (trunc(:p_to_date) + 86399/86400)
+    AND gcc.segment3 BETWEEN nvl(:p_account_from, gcc.segment3) AND nvl(:p_account_to, gcc.segment3)
+    AND gcc.segment2 BETWEEN nvl(:p_department_from, gcc.segment2) AND nvl(:p_department_to, gcc.segment2)
+    AND gcc.segment4 BETWEEN nvl(:p_location_from, gcc.segment4) AND nvl(:p_location_to, gcc.segment4)
+    AND gcc.segment5 BETWEEN nvl(:p_product_from, gcc.segment5) AND nvl(:p_product_to, gcc.segment5)
+    AND gcc.segment6 BETWEEN nvl(:p_customer_category_from, gcc.segment6) AND nvl(:p_customer_category_to, gcc.segment6)
+    AND gcc.segment7 BETWEEN nvl(:p_sales_channel_from, gcc.segment7) AND nvl(:p_sales_channel_to, gcc.segment7)
+    AND gcc.segment8 BETWEEN nvl(:p_intercompany_from, gcc.segment8) AND nvl(:p_intercompany_to, gcc.segment8)
+    AND gcc.segment9 BETWEEN nvl(:p_account_class_from, gcc.segment9) AND nvl(:p_account_class_to, gcc.segment9)
+ --   AND gjb.name IN ( 'Receivables A 817347000001 817348 N' )
