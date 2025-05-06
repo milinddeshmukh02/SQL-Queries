@@ -1,0 +1,35 @@
+
+SELECT NVL(pe.name, p.name) AS task_name,
+ rlm.alias AS planning_resource,
+ ra.TOTAL_PLAN_RAW_COST
+FROM pa_budget_versions bv,
+ pa_fin_plan_types_b pt,
+ pa_proj_fp_options po,
+ pa_resource_assignments ra,
+ pa_resource_list_members rlm,
+ pa_projects_all p,
+ pa_proj_elements pe,
+ pa_proj_element_versions pev
+WHERE bv.budget_version_id =
+ (SELECT budget_version_id
+ FROM pa_budget_versions
+ WHERE project_id =:p_project_id
+ AND fin_plan_type_id=
+ (SELECT fin_plan_type_id
+ FROM pa_fin_plan_types_vl
+ WHERE migrated_frm_bdgt_typ_code='AC'
+ AND UPPER(NAME) =UPPER('Approved Cost Budget')
+ )
+ AND budget_status_code='B'
+ AND current_flag ='Y'
+ )
+AND bv.project_id = p.project_id
+AND bv.fin_plan_type_id = pt.fin_plan_type_id
+AND bv.budget_version_id = po.fin_plan_version_id
+AND po.fin_plan_option_level_code = 'PLAN_VERSION'
+AND po.fin_plan_version_id = bv.budget_version_id
+AND bv.budget_version_id = ra.budget_version_id
+AND ra.resource_list_member_id = rlm.resource_list_member_id
+AND ra.task_id = pev.proj_element_id (+)
+and pev.parent_structure_version_id(+)=pa_planning_element_utils.get_fin_struct_id(ra.project_id,ra.budget_version_id)
+AND pev.proj_element_id = pe.proj_element_id (+);
