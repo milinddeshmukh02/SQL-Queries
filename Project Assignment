@@ -1,0 +1,35 @@
+SELECT fa.asset_number           fin_asset_number,
+       fad.description           fin_asset_name,
+       pa.segment1               project_number,
+       t.task_number,
+       paa.asset_name            project_asset_name,
+       pal.project_asset_line_id project_asset_line_number,
+       pei.expenditure_item_id   cost_transanction_number,
+       aia.invoice_num
+FROM   fa_additions_b fa,
+       fa_asset_invoices ai,
+       pjf_projects_all_b pa,
+       pjf_tasks_v t,
+       pjc_prj_asset_lns_all pal,
+       pjc_prj_assets_all paa,
+       pjc_exp_items_all pei,
+       ap_invoices_all aia,
+       fa_additions_tl fad
+WHERE  fa.asset_id = ai.asset_id
+       AND pa.project_id = ai.project_id
+       AND t.task_id = ai.task_id
+       AND AI.project_asset_line_id = PAL.project_asset_line_id
+       AND t.project_id = pa.project_id
+       AND pal.task_id = t.task_id
+       AND pal.project_id = pa.project_id
+       AND paa.project_asset_id = pal.project_asset_id
+       AND pei.project_id = pa.project_id
+       AND t.task_id = pei.task_id
+       AND aia.invoice_id = pei.original_header_id
+       AND fa.asset_id = fad.asset_id
+       --and t.task_number='04.01'
+       --and segment1='C&O10002'
+       -- and PARENT_MASS_ADDITION_ID is not null 
+       AND fa.asset_number = '100000045'
+       AND fad.language = 'US'
+ORDER  BY AI.project_asset_line_id
